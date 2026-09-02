@@ -1,0 +1,50 @@
+ImagePipeline 图片批处理工具
+
+1. 双击 ImagePipeline.exe。
+2. 输入原始图片所在目录，按 Enter（可以拖入目录，支持中文、空格和引号）。
+3. 到原图目录下的 output 文件夹获取结果。
+
+默认每张原图输出两张白底 PNG，与旧版构图一致：
+  原名.png          1000×1000 主图
+  原名_效果图.png   1000×618 效果图
+默认跳过已存在的成品。原始图片不会修改。
+
+只处理所选目录第一层的单帧 JPG/JPEG/PNG/WEBP/BMP/TIF/TIFF。
+相机 JPG 内含 MPO 预览图时，按旧流程读取第一帧全尺寸主图。
+不处理子目录，不允许把 output、程序目录或资源目录当成原图目录。
+同名不同扩展名会保留来源扩展名，例如 ABC.jpg.png、ABC.png.png。
+
+请复制整个 ImagePipeline 文件夹，不要只复制 EXE。
+不需要 Python、pip、模型下载或网络。模型文件必须随包提供。
+首次启动可能因模型初始化与本地计算缓存建立而需要等待。
+
+可在 EXE 旁的 config.json 中调整参数：
+  resize.variants 改为 ["main"] 可只输出主图。
+  resize.background 默认 "white"，改为 "transparent" 可输出透明背景。
+  output.existing 默认 "skip"，改为 "overwrite" 可更新 output 成品。
+替换 assets/watermark.png 可更换水印；不会自动缩放到画布。
+默认 opacity=1 保留水印文件本身的透明度，不代表水印完全不透明。
+保留 JSON 标点，修改后程序会检查参数合法性。
+
+更换去背景模型（需使用支持可配置模型的新版 EXE）：
+  在 rembg 对象中设置 model 与 model_path，保留其他参数。例如：
+    "model": "birefnet-general",
+    "model_path": "models/birefnet-general.onnx",
+  把对应的 ONNX 模型放到这个路径，保存 config.json 后重新启动。
+  相对路径从 EXE 所在目录计算，Windows 路径建议用 /，如 D:/模型/model.onnx。
+  文件名可以自定；model 必须与模型的处理方式匹配，不能任意填写。
+  支持 u2net、u2netp、u2net_human_seg、u2net_custom、silueta、
+  isnet-general-use、isnet-anime、dis_custom、birefnet-general、
+  birefnet-general-lite、birefnet-portrait、birefnet-dis、birefnet-hrsod、
+  birefnet-cod、birefnet-massive、bria-rmbg、ben_custom。
+  不支持需要多个模型/提示的 SAM 和多遮罩服装分割。
+  不要求固定模型校验值，不自动下载模型；文件必须非空、可读且兼容。
+  --check 只检查文件可读性，不验证模型能否推理。
+  比较效果时请用新图片目录，或把 output.existing 改为 overwrite。
+
+日志默认在程序的 logs 文件夹；不可写时放入本地应用数据或临时目录。
+窗口底部会显示实际日志路径。
+遇到错误请提供该日志。模型缺失或无法加载时，请检查 model、model_path 与对应模型文件。
+
+开发者构建时需要 Windows、Python 3.11 x64，以及首次准备依赖和模型的网络。
+运行 build.bat；build.bat 不是普通用户的启动入口。

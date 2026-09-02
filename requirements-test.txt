@@ -1,0 +1,3 @@
+-r requirements-build.txt
+# Only for running the untouched legacy rembg CLI during visual comparisons.
+rembg[cpu,cli]==2.0.67

@@ -1,0 +1,27 @@
+# Local Python environments and caches
+.venv/
+.venv-build/
+__pycache__/
+*.py[cod]
+.cache/
+.pytest_cache/
+
+# Generated builds, archives, logs and processed images
+build/
+dist/
+*.zip
+logs/
+*.log
+output/
+.image-pipeline-*.tmp
+tests/artifacts/
+
+# Keep model instructions, but never commit local weights or downloads
+/models/**
+!/models/README.md
+
+# Local machine settings
+.env
+.env.*
+!.env.example
+.DS_Store

@@ -1,0 +1,12 @@
+# Development/runtime dependencies. End users run the packaged EXE, never pip.
+# Tested baseline: CPython 3.11 x64, CPU only. Upgrade with visual regression tests.
+rembg[cpu]==2.0.67
+Pillow==11.3.0
+onnxruntime==1.22.1
+numpy==2.2.6
+scipy==1.15.3
+opencv-python-headless==4.12.0.88
+scikit-image==0.25.2
+pymatting==1.1.14
+numba==0.61.2
+llvmlite==0.44.0

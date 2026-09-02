@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "rembg": {
+    "model": "u2net",
+    "model_path": "models/u2net.onnx",
+    "alpha_matting": false,
+    "foreground_threshold": 240,
+    "background_threshold": 10,
+    "erode_size": 10,
+    "post_process_mask": false
+  },
+  "resize": {
+    "alpha_threshold": 10,
+    "rotate_portrait": true,
+    "resample": "LANCZOS",
+    "background": "white",
+    "variants": ["main", "golden"],
+    "main": {
+      "canvas": [1000, 1000],
+      "target_size": 900,
+      "offset": [0, 0]
+    },
+    "golden": {
+      "canvas": [1000, 618],
+      "target": [900, 600],
+      "ratio_threshold": 1.618,
+      "offset": [0, 0]
+    }
+  },
+  "watermark": {
+    "path": "assets/watermark.png",
+    "scale": 1.0,
+    "position": [0, 0],
+    "opacity": 1.0
+  },
+  "output": {
+    "format": "PNG",
+    "existing": "skip",
+    "dpi": [72, 72]
+  }
+}
