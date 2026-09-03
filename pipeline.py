@@ -91,7 +91,8 @@ def discover_images(directory: Path, config: Config) -> list[Path]:
     excluded = {config.watermark.path, config.root / "watermark.png"}
     return sorted(
         (p for p in directory.iterdir() if p.is_file() and not p.is_symlink()
-         and p.suffix.lower() in SUPPORTED_EXTENSIONS and p.resolve() not in excluded),
+         and p.suffix.lower() in SUPPORTED_EXTENSIONS
+         and not p.name.casefold().endswith("_nobg.png") and p.resolve() not in excluded),
         key=lambda p: (p.name.casefold(), p.name),
     )
 
@@ -122,18 +123,19 @@ def validate_environment(config: Config) -> Image.Image:
     return watermark
 
 
-def save_png(image: Image.Image, destination: Path, config: Config) -> bool:
-    """Encode only once, then publish atomically. Never leave a partial final PNG."""
+def save_png(image: Image.Image, destination: Path, config: Config, *, raw_cutout: bool = False) -> bool:
+    """Publish atomically; raw cutouts always overwrite without final-output DPI settings."""
     if destination.is_symlink():
         raise ValueError(f"输出文件是符号链接，拒绝写入：{destination}")
     handle, temporary = tempfile.mkstemp(prefix=".image-pipeline-", suffix=".tmp", dir=destination.parent)
     temporary = Path(temporary)
     try:
         with os.fdopen(handle, "wb") as stream:
-            image.save(stream, format="PNG", dpi=config.output.dpi, optimize=True)
+            options = {} if raw_cutout else {"dpi": config.output.dpi, "optimize": True}
+            image.save(stream, format="PNG", **options)
             stream.flush()
             os.fsync(stream.fileno())
-        if config.output.existing == "overwrite":
+        if raw_cutout or config.output.existing == "overwrite":
             os.replace(temporary, destination)
         else:
             try:
@@ -161,9 +163,6 @@ def process_image(input_path: Path, output_paths: dict[str, Path], context: Cont
             emit(f"  跳过已有文件：{path.name}")
         else:
             pending[variant] = path
-    if not pending:
-        LOG.info("SKIP %s -> %s", input_path, result.skipped)
-        return result
     try:
         with Image.open(input_path) as source:
             # Camera JPEGs can contain an MPF/MPO preview (these real inputs do).
@@ -173,7 +172,15 @@ def process_image(input_path: Path, output_paths: dict[str, Path], context: Cont
             source.load()
             # Do not convert before rembg: match CLI behavior for JPEG, palette and EXIF.
             cutout = remove_background(source, context.session, config.rembg)
+        # Save the full rembg result BEFORE cropping, scaling, placement or watermark.
+        cutout_path = input_path.with_name(f"{input_path.stem}_nobg.png")
+        save_png(cutout, cutout_path, config, raw_cutout=True)
+        LOG.info("SAVED RAW CUTOUT %s -> %s", input_path, cutout_path)
         emit("  去背景完成")
+        emit(f"  已保存原始抠图：{cutout_path.name}")
+        if not pending:
+            LOG.info("SKIP %s -> %s", input_path, result.skipped)
+            return result
         subject = prepare_subject(cutout, config.resize)
         for variant, destination in pending.items():
             image = resize_image(subject, config.resize, variant)
@@ -214,9 +221,8 @@ def process_directory(input_dir: str | Path, *, config: Config | None = None,
     emit(f"输入目录：{directory}\n输出目录：{output}\n找到 {len(sources)} 张图片。")
     LOG.info("INPUT %s; OUTPUT %s; COUNT %d", directory, output, len(sources))
     plans = plan_outputs(sources, config.resize.variants, output)
-    needs_model = any(config.output.existing == "overwrite" or not p.is_file() or p.is_symlink()
-                      for paths in plans.values() for p in paths.values())
-    if needs_model and context is None:
+    # Every source refreshes its raw cutout, even when all final outputs exist.
+    if sources and context is None:
         emit("正在加载去背景模型，请稍候……")
         try:
             context = Context(config, watermark, create_session(config.rembg))
@@ -225,7 +231,7 @@ def process_directory(input_dir: str | Path, *, config: Config | None = None,
             raise ResourceError(f"去背景模型初始化失败：{exc}\n请查看日志；Windows 上请使用完整的发布目录。") from exc
         LOG.info("Model loaded; %s; CPUExecutionProvider; %s", config.rembg.model, config.rembg.model_path)
         emit("模型加载完成。")
-    # No pending files => process_image returns before accessing this empty session.
+    # No sources => the loop below never accesses this empty session.
     context = context or Context(config, watermark, None)
     for index, source in enumerate(sources, 1):
         emit(f"\n[{index}/{len(sources)}] {source.name}")

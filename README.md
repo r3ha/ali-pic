@@ -1,16 +1,19 @@
 # ImagePipeline
 
-本地图片批处理：**去背景 → 裁剪/旋转/缩放/定位 → 水印 → PNG**。
+本地图片批处理：**去背景 → 原图目录保存原始透明 PNG → 裁剪/缩放/定位 → 水印 → 最终 PNG**。
+图片方向请在批处理前人工调整；程序没有业务旋转步骤或旋转配置。
 面向 Windows 的 PyInstaller `onedir` 便携发布；核心逻辑为 Python，无 GUI、无服务、无多进程。
 
 ## 普通用户
 
 1. 复制完整的 `ImagePipeline` 发布文件夹，双击 `ImagePipeline.exe`。
 2. 输入原图目录，支持中文、空格、拖入目录和两侧引号。
-3. 在原图目录的 `output` 中取图。
+3. 原图目录获取 `原名_nobg.png` 原始抠图，在 `output` 中获取最终成品。
 
 不用安装 Python/pip/rembg，不需要网络；模型必须随发布包一起提供。
 原始图片不改动，默认跳过已有成品，只扫描目录第一层，不接受程序内部目录或 `output` 作为输入。
+`*_nobg.png` 不区分大小写排除，不会被重新当作输入；每次运行仍对原图重新抠图并覆盖该文件。
+成品的 `skip` 策略仅作用于 `output`，不会跳过原始抠图更新，因此重复运行仍需加载模型和推理。
 默认每张原图保留旧版的两种白底构图：`原名.png` 和 `原名_效果图.png`。
 仅需主图时，把 `resize.variants` 改成 `["main"]`。
 
@@ -56,7 +59,7 @@ dist/ImagePipeline/
 ├── ImagePipeline.exe
 ├── config.json
 ├── assets/watermark.png
-├── models/u2net.onnx
+├── models/BiRefNet-general-epoch_244.onnx
 ├── _internal/
 ├── licenses/
 ├── BUILD-INFO.txt
@@ -67,6 +70,10 @@ dist/ImagePipeline/
 Windows EXE 必须在 Windows 构建。`dist/macos-validation/` 若存在，只是 macOS 验证产物。
 需要验证其他电脑的兼容性时，可手动在无 Python 的 Windows x64 机器上断网试运行。
 
+本次流水线调整涉及 Python 源码，需重新运行 `build.bat`，然后整体替换新的 `dist/ImagePipeline/`。
+请使用本次随源码更新的 `config.json`；旧配置中的 `resize.rotate_portrait` 已删除，不能带入新版。
+其余有效参数保持不变，当前模型仍是 `birefnet-general`。
+
 ## 配置
 
 读取规则：开发时使用项目目录，冻结时使用 EXE 所在目录，与当前 CMD 目录无关。
@@ -75,12 +82,11 @@ Windows EXE 必须在 Windows 构建。`dist/macos-validation/` 若存在，只�
 
 | 参数 | 默认及作用 |
 | --- | --- |
-| `rembg.model` | 默认 `u2net`；选择与本地权重对应的模型适配器，支持列表见下方 |
-| `rembg.model_path` | 默认 `models/u2net.onnx`；读取此处的本地文件，不限制文件名或固定权重哈希 |
+| `rembg.model` | 当前 `birefnet-general`；选择与本地权重对应的模型适配器，支持列表见下方 |
+| `rembg.model_path` | 当前 `models/BiRefNet-general-epoch_244.onnx`；读取此处的本地文件，不限制文件名或固定权重哈希 |
 | `rembg.alpha_matting` | `false`，阈值 240/10，腐蚀大小 10 |
 | `rembg.post_process_mask` | `false` |
 | `resize.alpha_threshold` | `10`；仅计算裁剪框，不改主体内部 alpha；0 保留旧代码的“不裁透明边界”行为 |
-| `resize.rotate_portrait` | `true`；裁剪后高大于宽则逆时针 90° |
 | `resize.resample` | `LANCZOS`，也可 BICUBIC/BILINEAR/NEAREST |
 | `resize.background` | `white` 保持旧白底；`transparent` 是主动选择的新输出模式 |
 | `resize.variants` | `["main", "golden"]`，可只保留其中一种 |
@@ -93,6 +99,10 @@ Windows EXE 必须在 Windows 构建。`dist/macos-validation/` 若存在，只�
 | `output.format` | 只允许 `PNG`，防止丢失透明通道 |
 | `output.existing` | `skip`；可改为 `overwrite`，仅替换 output 中的成品 |
 | `output.dpi` | `[72,72]` |
+
+`output.dpi` 和成品保存参数只用于最终成品。原始抠图按 rembg 返回图像直接编码 PNG，
+不裁剪、不缩放、不调整位置、不加水印，也不附加成品 DPI 设置。
+rembg 本身按 EXIF 标签解读照片方向的行为保持不变，程序没有额外的方向判断或旋转。
 
 ### 更换去背景模型
 
@@ -131,6 +141,10 @@ SAM 需要多个模型文件及提示参数，服装分割会产生多个遮罩�
 同名冲突按 Windows 不区分大小写的规则统一预分配，包含主图/效果图名称冲突。
 如 `ABC.jpg` 与 `ABC.png`，输出使用 `ABC.jpg.png`、`ABC.png.png`；更复杂冲突追加 `_2` 等序号。
 同一组输入的命名固定；增删输入可能改变冲突名称，已有历史成品不自动清理。
+上述冲突规则只用于 `output` 成品。原始抠图始终使用 `Path.stem + "_nobg.png"`：
+`ABC.jpg` 或 `ABC.png` 均写成原图目录的 `ABC_nobg.png`，存在则覆盖，不加扩展名或编号。
+同目录若同时存在 `ABC.jpg` 和 `ABC.png`，它们共用该原始抠图文件，后处理的原图会覆盖前一份；
+需要分别保留时，请先将原图命名为不同的 stem。
 
 ## 核心 API
 
@@ -143,8 +157,11 @@ print(result.successful, result.failed, result.skipped, result.output_dir)
 
 `process_directory` 管理启动校验、扫描、命名、一次 session 初始化和汇总。
 `process_image` 管理单图；`Context` 可由未来 GUI 持有，以跨批次复用 session。
-处理步骤之间传递 Pillow 图像，不产生阶段目录。每个最终成品编码一次；同目录临时文件只用于
-原子提交，避免中断留下半张 PNG。两种构图共用一次抠图。
+处理步骤之间传递 Pillow 图像，不产生阶段目录；保存原始抠图后直接继续使用内存中的同一结果。
+原始抠图在 `prepare_subject` 裁剪透明边之前保存；原始抠图和成品均使用同目录临时文件原子提交，
+避免中断留下半张 PNG。两种构图共用一次抠图。
+原始抠图写入失败时，该原图记为失败并继续处理后续原图；若后续处理失败，已保存的原始抠图保留。
+终端成功/跳过/保存成品的统计继续按最终成品计算，原始抠图另有逐文件保存提示和日志。
 单个变体保存后另一变体失败，会在汇总标记该原图失败并列出已经保存的部分成品。
 
 ## 可选验证与历史证据
@@ -155,15 +172,18 @@ print(result.successful, result.failed, result.skipped, result.output_dir)
 
 ```text
 python -m unittest discover -s tests -v
-python -m pip install -r requirements-test.txt
-python tests/verify_real_images.py 4T8A8532.JPG 4T8A8682.JPG
+python tests/verify_pipeline_update.py 横图.jpg 竖图.png
 python tools/smoke_release.py dist/ImagePipeline/ImagePipeline.exe
 ```
 
-真实对比测试需要 rembg CLI 额外依赖，正式发布不包含这些 CLI/Web 依赖。
+`verify_pipeline_update.py` 用当前配置和真实本地模型验证原始抠图像素、保存顺序、方向、重复运行，
+禁止联网和默认模型回退；复制输入后测试，不修改传入的原图。报告保存在 `tests/artifacts/pipeline-update-real.json`。
+`verify_real_images.py` 是旧 U²-Net/旧脚本对照工具，不适用于当前 BiRefNet 无旋转流程。
+旧版真实对比测试需要 rembg CLI 额外依赖，正式发布不包含这些 CLI/Web 依赖。
 旧脚本仅作为对照基准，不参与新业务流程或默认构建。
 
-详细结果和旧参数审计见 [docs/REFACTOR_REPORT.md](docs/REFACTOR_REPORT.md)。
+本次变更与验收见 [docs/PIPELINE_UPDATE.md](docs/PIPELINE_UPDATE.md)。
+历史结果和旧参数审计见 [docs/REFACTOR_REPORT.md](docs/REFACTOR_REPORT.md)，其中旋转和默认模型描述属于旧版。
 机器可读像素对比见 `tests/artifacts/real-image-report.json`；实际成品见 `tests/artifacts/new_output/`。
 这些历史验证产物只保存在本地，不随 Git 仓库提供。
 

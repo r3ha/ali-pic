@@ -1,4 +1,4 @@
-"""Keep the legacy crop, rotation, rounding, scaling and placement exactly."""
+"""Keep the legacy crop, rounding, scaling and placement; preserve input direction."""
 from PIL import Image
 
 from app_config import ResizeConfig
@@ -12,8 +12,6 @@ def prepare_subject(image: Image.Image, config: ResizeConfig) -> Image.Image:
     if bbox is None:
         raise ValueError("图片完全透明，没有检测到有效主体。")
     image = image.crop(bbox)
-    if config.rotate_portrait and image.height > image.width:
-        image = image.rotate(90, expand=True)
     return image
 
 

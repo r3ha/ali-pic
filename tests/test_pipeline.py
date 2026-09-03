@@ -51,12 +51,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(expected.convert("RGBA").tobytes(), actual.convert("RGBA").tobytes())
 
     @unittest.skipUnless((ROOT / "png-resize.py").is_file(), "Optional legacy comparison requires png-resize.py")
-    def test_resize_matches_legacy_landscape_portrait_square_and_ratio_boundary(self):
+    def test_resize_matches_legacy_scaling_and_placement_without_direction_changes(self):
         legacy_resize = load_legacy("old_resize", "png-resize.py")
         for size in [(160, 80), (80, 160), (80, 80), (159, 100), (162, 100)]:
             with self.subTest(size=size), redirect_stdout(io.StringIO()):
                 original = subject(*size)
-                old = legacy_resize.rotate_to_landscape(legacy_resize.crop_transparent_area(original, 10))
+                old = legacy_resize.crop_transparent_area(original, 10)
                 prepared = prepare_subject(original, self.config.resize)
                 self.assertPixelsEqual(old, prepared)
                 for variant in ("main", "golden"):
@@ -64,6 +64,145 @@ class PipelineTests(unittest.TestCase):
                     canvas = (1000, 1000) if variant == "main" else (1000, 618)
                     expected = legacy_resize.center_on_white_bg(layer, canvas)
                     self.assertPixelsEqual(expected, resize_image(prepared, self.config.resize, variant))
+
+    def test_subject_direction_and_existing_resize_placement(self):
+        # Fixed expected dimensions cover both axes and both sides of the golden threshold.
+        cases = [
+            ((160, 80), (900, 450), (900, 450)),
+            ((80, 160), (450, 900), (300, 600)),
+            ((80, 80), (900, 900), (600, 600)),
+            ((159, 100), (900, 566), (954, 600)),
+            ((162, 100), (900, 556), (900, 556)),
+        ]
+        for (width, height), main_size, golden_size in cases:
+            with self.subTest(size=(width, height)):
+                original = subject(width, height)
+                # Asymmetric colors and soft alpha detect flips and 180-degree changes, too.
+                expected_subject = original.crop((15, 15, width + 15, height + 15))
+                prepared = prepare_subject(original, self.config.resize)
+                self.assertPixelsEqual(expected_subject, prepared)
+                for variant, dimensions, canvas in (
+                    ("main", main_size, (1000, 1000)),
+                    ("golden", golden_size, (1000, 618)),
+                ):
+                    layer = expected_subject.resize(dimensions, Image.Resampling.LANCZOS)
+                    expected = Image.new("RGB", canvas, "white")
+                    xy = ((canvas[0] - dimensions[0]) // 2, (canvas[1] - dimensions[1]) // 2)
+                    expected.paste(layer, xy, layer.getchannel("A"))
+                    self.assertPixelsEqual(expected, resize_image(prepared, self.config.resize, variant))
+
+    def test_raw_cutout_is_saved_pixel_exact_before_any_subject_processing(self):
+        for name, size in (("ABC.jpg", (160, 80)), ("ABC.png", (80, 160))):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp)
+                original = subject(*size)
+                original.convert("RGB").save(directory / name)
+                source_bytes = (directory / name).read_bytes()
+                raw_path = directory / "ABC_nobg.png"
+                seen = []
+
+                def prepare(image, config):
+                    # This callback runs before even the existing transparent-border crop.
+                    self.assertIs(image, original)
+                    with Image.open(raw_path) as raw:
+                        self.assertEqual((raw.format, raw.mode), ("PNG", "RGBA"))
+                        self.assertPixelsEqual(original, raw)
+                        self.assertEqual(raw.getchannel("A").getextrema(), (0, 255))
+                        self.assertIn(9, raw.getchannel("A").getdata())
+                    self.assertFalse(list((directory / "output").iterdir()))
+                    seen.append(True)
+                    return prepare_subject(image, config)
+
+                with patch("pipeline.verify_model"), patch("pipeline.create_session", return_value=object()) as session, \
+                        patch("pipeline.remove_background", return_value=original) as remove, \
+                        patch("pipeline.prepare_subject", side_effect=prepare):
+                    result = process_directory(directory, config=self.config)
+                self.assertEqual(result.successful, 1)
+                self.assertEqual(seen, [True])
+                session.assert_called_once_with(self.config.rembg)
+                self.assertIs(remove.call_args.args[2], self.config.rembg)
+                self.assertEqual((directory / name).read_bytes(), source_bytes)
+                self.assertEqual(sorted(p.name for p in directory.glob("*_nobg.png")), ["ABC_nobg.png"])
+
+    def test_repeat_refreshes_raw_cutout_even_when_final_outputs_are_skipped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            subject().convert("RGB").save(directory / "ABC.jpg")
+            raw_path = directory / "ABC_nobg.png"
+            latest = subject(80, 160)
+            with patch("pipeline.verify_model"), patch("pipeline.create_session", return_value=object()) as session, \
+                    patch("pipeline.remove_background", side_effect=[subject(), latest, latest]) as remove:
+                first = process_directory(directory, config=self.config)
+                self.assertEqual(first.successful, 1)
+                finals = {p: p.read_bytes() for p in first.files[0].saved}
+                for missing_raw in (False, True):
+                    if missing_raw:
+                        raw_path.unlink()
+                    with patch("pipeline.prepare_subject") as prepare, patch("pipeline.resize_image") as resize, \
+                            patch("pipeline.add_watermark") as watermark:
+                        rerun = process_directory(directory, config=self.config)
+                    self.assertEqual((len(rerun.files), rerun.failed, rerun.skipped), (1, 0, 1))
+                    prepare.assert_not_called()
+                    resize.assert_not_called()
+                    watermark.assert_not_called()
+                    with Image.open(raw_path) as raw:
+                        self.assertPixelsEqual(latest, raw)
+                    self.assertEqual(finals, {p: p.read_bytes() for p in finals})
+                self.assertEqual(session.call_count, 3)
+                self.assertEqual(remove.call_count, 3)
+            self.assertEqual(sorted(p.name for p in directory.iterdir()), ["ABC.jpg", "ABC_nobg.png", "output"])
+
+    def test_discovery_excludes_raw_cutouts_case_insensitively_and_output_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp).resolve()
+            for name in ("ABC.jpg", "ABC_nobg.png", "Other_NoBg.PNG", "X_效果图.png"):
+                subject().convert("RGB").save(directory / name)
+            (directory / "output").mkdir()
+            subject().save(directory / "output" / "ABC.png")
+            cfg = replace(self.config, watermark=replace(self.config.watermark, path=directory / "watermark.png"))
+            subject().save(cfg.watermark.path)
+            self.assertEqual([p.name for p in discover_images(directory, cfg)], ["ABC.jpg", "X_效果图.png"])
+
+    def test_raw_cutout_survives_later_processing_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            subject().save(directory / "ABC.png")
+            blank = Image.new("RGBA", (77, 101))
+            with patch("pipeline.verify_model"), patch("pipeline.create_session", return_value=object()), \
+                    patch("pipeline.remove_background", return_value=blank):
+                result = process_directory(directory, config=self.config)
+            self.assertEqual(result.failed, 1)
+            self.assertIn("完全透明", result.files[0].error)
+            with Image.open(directory / "ABC_nobg.png") as raw:
+                self.assertPixelsEqual(blank, raw)
+            self.assertEqual(list((directory / "output").iterdir()), [])
+
+    def test_raw_save_failure_preserves_previous_cutout_and_isolates_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp).resolve()
+            subject().save(directory / "01.png")
+            subject().save(directory / "02.png")
+            old_path = directory / "01_nobg.png"
+            Image.new("RGBA", (3, 4)).save(old_path)
+            previous = old_path.read_bytes()
+            real_replace = os.replace
+
+            def fail_first(source, destination):
+                if destination == old_path:
+                    raise PermissionError("raw cutout is read-only")
+                return real_replace(source, destination)
+
+            with patch("pipeline.verify_model"), patch("pipeline.create_session", return_value=object()), \
+                    patch("pipeline.remove_background", return_value=subject()), \
+                    patch("pipeline.os.replace", side_effect=fail_first), \
+                    patch("pipeline.prepare_subject", wraps=prepare_subject) as prepare:
+                result = process_directory(directory, config=self.config)
+            self.assertEqual((result.failed, result.successful), (1, 1))
+            self.assertIn("read-only", result.files[0].error)
+            self.assertEqual(prepare.call_count, 1)
+            self.assertEqual(old_path.read_bytes(), previous)
+            self.assertFalse((directory / "output" / "01.png").exists())
+            self.assertFalse(list(directory.glob(".image-pipeline-*.tmp")))
 
     @unittest.skipUnless((ROOT / "watermark.py").is_file(), "Optional legacy comparison requires watermark.py")
     def test_watermark_matches_actual_legacy_function_before_jpeg_encoding(self):
@@ -135,7 +274,7 @@ class PipelineTests(unittest.TestCase):
         base = json.loads((ROOT / "config.json").read_text())
         cases = [
             ("canvas", lambda d: d["resize"]["main"].update(canvas=[0, 1000])),
-            ("boolean", lambda d: d["resize"].update(rotate_portrait="yes")),
+            ("boolean", lambda d: d["rembg"].update(alpha_matting="yes")),
             ("opacity", lambda d: d["watermark"].update(opacity=1.1)),
             ("missing", lambda d: d.pop("output")),
             ("extra", lambda d: d["watermark"].update(opactiy=0.5)),
@@ -183,6 +322,8 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(remove.call_count, 2)
                 rerun = process_directory(temp, config=self.config)
                 self.assertEqual((len(rerun.files), rerun.failed, rerun.skipped), (3, 1, 2))
+                self.assertEqual(remove.call_count, 4)
+                self.assertEqual(sorted(p.name for p in directory.glob("*_nobg.png")), ["01_nobg.png", "03_nobg.png"])
                 self.assertEqual(len(list((directory / "output").glob("*.png"))), 4)
                 for name, data in originals.items():
                     self.assertEqual((directory / name).read_bytes(), data)

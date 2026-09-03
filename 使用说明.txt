@@ -2,17 +2,27 @@ ImagePipeline 图片批处理工具
 
 1. 双击 ImagePipeline.exe。
 2. 输入原始图片所在目录，按 Enter（可以拖入目录，支持中文、空格和引号）。
-3. 到原图目录下的 output 文件夹获取结果。
+3. 原图目录获取 原名_nobg.png 原始透明抠图，到 output 文件夹获取最终成品。
+
+批处理前请先人工把原图调整到正确方向。程序没有自动旋转步骤或旋转参数。
+处理顺序：读取原图 → rembg → 保存原始透明抠图 → 原有裁剪/缩放/位置调整 → 水印 → 成品。
+原始抠图保存前不裁剪、不缩放、不移动主体、不加水印，保留 rembg 输出的尺寸和像素。
+rembg 原有的 EXIF 方向标签处理保持不变。
 
 默认每张原图输出两张白底 PNG，与旧版构图一致：
   原名.png          1000×1000 主图
   原名_效果图.png   1000×618 效果图
 默认跳过已存在的成品。原始图片不会修改。
+原始抠图每次运行都会重新生成并覆盖，不受 output.existing 的 skip 设置影响。
+例如 ABC.jpg 或 ABC.png 均保存为同目录 ABC_nobg.png，不加编号或额外扩展名。
+如果两张原图 stem 都是 ABC，则共用 ABC_nobg.png，后处理的会覆盖前一份；需分别保留请先改原图名。
+重复运行仍需等待模型推理；终端成功/跳过/成品数量仍按 output 中的最终成品计算。
 
 只处理所选目录第一层的单帧 JPG/JPEG/PNG/WEBP/BMP/TIF/TIFF。
 相机 JPG 内含 MPO 预览图时，按旧流程读取第一帧全尺寸主图。
 不处理子目录，不允许把 output、程序目录或资源目录当成原图目录。
-同名不同扩展名会保留来源扩展名，例如 ABC.jpg.png、ABC.png.png。
+不区分大小写排除 *_nobg.png，不会产生 ABC_nobg_nobg.png。
+output 最终成品同名不同扩展名会保留来源扩展名，例如 ABC.jpg.png、ABC.png.png。
 
 请复制整个 ImagePipeline 文件夹，不要只复制 EXE。
 不需要 Python、pip、模型下载或网络。模型文件必须随包提供。
@@ -25,6 +35,8 @@ ImagePipeline 图片批处理工具
 替换 assets/watermark.png 可更换水印；不会自动缩放到画布。
 默认 opacity=1 保留水印文件本身的透明度，不代表水印完全不透明。
 保留 JSON 标点，修改后程序会检查参数合法性。
+本次已删除 resize.rotate_portrait，请使用随新版一起发布的 config.json。
+当前配置读取 birefnet-general 与 models/BiRefNet-general-epoch_244.onnx，模型加载方式未改变。
 
 更换去背景模型（需使用支持可配置模型的新版 EXE）：
   在 rembg 对象中设置 model 与 model_path，保留其他参数。例如：
@@ -48,3 +60,4 @@ ImagePipeline 图片批处理工具
 
 开发者构建时需要 Windows、Python 3.11 x64，以及首次准备依赖和模型的网络。
 运行 build.bat；build.bat 不是普通用户的启动入口。
+本次修改了程序源码，需重新运行 build.bat 并整体更新 dist/ImagePipeline/，仅替换配置不会更新旧 EXE。

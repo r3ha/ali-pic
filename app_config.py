@@ -63,7 +63,6 @@ class RemBgConfig:
 @dataclass(frozen=True)
 class ResizeConfig:
     alpha_threshold: int
-    rotate_portrait: bool
     resample: str
     background: str
     variants: tuple[str, ...]
@@ -180,7 +179,7 @@ def load_config(root: Path | None = None) -> Config:
     )
     if rembg.foreground_threshold <= rembg.background_threshold:
         raise ConfigurationError("rembg.foreground_threshold 必须大于 background_threshold。")
-    r = _object(d["resize"], "alpha_threshold rotate_portrait resample background variants main golden", "resize")
+    r = _object(d["resize"], "alpha_threshold resample background variants main golden", "resize")
     m = _object(r["main"], "canvas target_size offset", "resize.main")
     g = _object(r["golden"], "canvas target ratio_threshold offset", "resize.golden")
     variants = r["variants"]
@@ -188,7 +187,6 @@ def load_config(root: Path | None = None) -> Config:
         raise ConfigurationError('resize.variants 必须是 ["main"]、["golden"] 或 ["main", "golden"]，不能重复。')
     resize = ResizeConfig(
         _int(r["alpha_threshold"], "resize.alpha_threshold", 0, 255),
-        _bool(r["rotate_portrait"], "resize.rotate_portrait"),
         _choice(r["resample"], "resize.resample", ("LANCZOS", "BICUBIC", "BILINEAR", "NEAREST")),
         _choice(r["background"], "resize.background", ("white", "transparent")),
         tuple(variants),

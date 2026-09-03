@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "rembg": {
-    "model": "u2net",
-    "model_path": "models/u2net.onnx",
+    "model": "birefnet-general",
+    "model_path": "models/BiRefNet-general-epoch_244.onnx",
     "alpha_matting": false,
     "foreground_threshold": 240,
     "background_threshold": 10,
@@ -11,7 +11,6 @@
   },
   "resize": {
     "alpha_threshold": 10,
-    "rotate_portrait": true,
     "resample": "LANCZOS",
     "background": "white",
     "variants": ["main", "golden"],
